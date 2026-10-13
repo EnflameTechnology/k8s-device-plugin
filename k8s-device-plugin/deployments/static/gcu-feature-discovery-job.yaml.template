@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gcu-feature-discovery
+  labels:
+    app.kubernetes.io/name: gcu-feature-discovery
+    app.kubernetes.io/version: 0.15.0
+    app.kubernetes.io/part-of: enflame-gcu
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gcu-feature-discovery
+        app.kubernetes.io/version: 0.15.0
+        app.kubernetes.io/part-of: enflame-gcu
+    spec:
+      nodeName: NODE_NAME
+      containers:
+        - image: nvcr.io/enflame/k8s-device-plugin:v0.15.0
+          name: gcu-feature-discovery
+          command: ["/usr/bin/gcu-feature-discovery"]
+          args:
+            - "--oneshot"
+          volumeMounts:
+            - name: output-dir
+              mountPath: "/etc/kubernetes/node-feature-discovery/features.d"
+            - name: host-sys
+              mountPath: "/sys"
+          securityContext:
+            privileged: true
+      volumes:
+        - name: output-dir
+          hostPath:
+            path: "/etc/kubernetes/node-feature-discovery/features.d"
+        - name: host-sys
+          hostPath:
+            path: "/sys"
+      restartPolicy: Never

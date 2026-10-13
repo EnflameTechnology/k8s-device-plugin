@@ -1,0 +1,16 @@
+apiVersion: v2
+name: enflame-device-plugin
+description: A Helm chart for Enflame Kubernetes Device Plugin
+type: application
+version: 0.1.0
+appVersion: "v2.0.0"
+keywords:
+  - enflame
+  - gcu
+  - device-plugin
+  - kubernetes
+maintainers:
+  - name: xixi.zhang
+    email: xixi.zhang@enflame-tech.com
+annotations:
+  category: Infrastructure 

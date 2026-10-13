@@ -1,0 +1,192 @@
+/**
+# Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, ENFLAME INC.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+**/
+
+package lm
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"k8s.io/klog/v2"
+
+	spec "enflame/k8s-device-plugin/api/config/v1"
+	"enflame/k8s-device-plugin/internal/resource"
+)
+
+// NewDeviceLabeler creates a new labeler for the specified resource manager.
+func NewDeviceLabeler(manager resource.Manager, config *spec.Config) (Labeler, error) {
+	if err := manager.Init(); err != nil {
+		return nil, fmt.Errorf("failed to initialize resource manager: %v", err)
+	}
+	defer func() {
+		_ = manager.Shutdown()
+	}()
+
+	devices, err := manager.GetDevices()
+	if err != nil {
+		return nil, fmt.Errorf("error getting devices: %v", err)
+	}
+
+	if len(devices) == 0 {
+		return empty{}, nil
+	}
+
+	machineTypeLabeler, err := newMachineTypeLabeler(*config.Flags.GFD.MachineTypeFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct machine type labeler: %v", err)
+	}
+
+	versionLabeler, err := newVersionLabeler(manager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct version labeler: %v", err)
+	}
+
+	migCapabilityLabeler, err := newMigCapabilityLabeler(manager)
+	if err != nil {
+		return nil, fmt.Errorf("error creating mig capability labeler: %v", err)
+	}
+
+	resourceLabeler, err := NewResourceLabeler(manager, config)
+	if err != nil {
+		return nil, fmt.Errorf("error creating resource labeler: %v", err)
+	}
+
+	l := Merge(
+		machineTypeLabeler,
+		versionLabeler,
+		migCapabilityLabeler,
+		resourceLabeler,
+		newSharingLabeler(manager, config),
+	)
+
+	return l, nil
+}
+
+// newVersionLabeler creates a labeler that generates the TOPS and driver version labels.
+func newVersionLabeler(manager resource.Manager) (Labeler, error) {
+	driverVersion, err := manager.GetDriverVersion()
+	if err != nil {
+		return nil, fmt.Errorf("error getting driver version: %v", err)
+	}
+
+	driverVersionSplit := strings.Split(driverVersion, ".")
+	if len(driverVersionSplit) > 3 || len(driverVersionSplit) < 2 {
+		return nil, fmt.Errorf("error getting driver version: Version \"%s\" does not match format \"X.Y[.Z]\"", driverVersion)
+	}
+
+	driverMajor := driverVersionSplit[0]
+	driverMinor := driverVersionSplit[1]
+	driverRev := ""
+	if len(driverVersionSplit) > 2 {
+		driverRev = driverVersionSplit[2]
+	}
+
+	topsMajor, topsMinor, err := manager.GetTopsDriverVersion()
+	if err != nil {
+		return nil, fmt.Errorf("error getting tops driver version: %v", err)
+	}
+
+	labels := Labels{
+		// Deprecated labels
+		"enflame.com/tops.driver.major":  driverMajor,
+		"enflame.com/tops.driver.minor":  driverMinor,
+		"enflame.com/tops.driver.rev":    driverRev,
+		"enflame.com/tops.runtime.major": fmt.Sprintf("%d", *topsMajor),
+		"enflame.com/tops.runtime.minor": fmt.Sprintf("%d", *topsMinor),
+
+		// New labels
+		"enflame.com/tops.driver-version.major":    driverMajor,
+		"enflame.com/tops.driver-version.minor":    driverMinor,
+		"enflame.com/tops.driver-version.revision": driverRev,
+		"enflame.com/tops.driver-version.full":     driverVersion,
+		"enflame.com/tops.runtime-version.major":   fmt.Sprintf("%d", *topsMajor),
+		"enflame.com/tops.runtime-version.minor":   fmt.Sprintf("%d", *topsMinor),
+		"enflame.com/tops.runtime-version.full":    fmt.Sprintf("%d.%d", *topsMajor, *topsMinor),
+	}
+	return labels, nil
+}
+
+// newMigCapabilityLabeler creates a new MIG capability labeler using the provided EFML library.
+// If any GCU on the node is mig-capable the label is set to true.
+func newMigCapabilityLabeler(manager resource.Manager) (Labeler, error) {
+	isMigCapable := false
+
+	devices, err := manager.GetDevices()
+	if err != nil {
+		return nil, err
+	}
+	if len(devices) == 0 {
+		// no devices, return empty labels
+		return empty{}, nil
+	}
+
+	// loop through all devices to check if any one of them is MIG capable
+	for _, d := range devices {
+		isMigCapable, err = d.IsMigCapable()
+		if err != nil {
+			return nil, fmt.Errorf("error getting mig capability: %v", err)
+		}
+		if isMigCapable {
+			break
+		}
+	}
+
+	labels := Labels{
+		"enflame.com/mig.capable": strconv.FormatBool(isMigCapable),
+	}
+	return labels, nil
+}
+
+func newSharingLabeler(manager resource.Manager, config *spec.Config) Labeler {
+	if config == nil || config.Sharing.SharingStrategy() != spec.SharingStrategyMPS {
+		return Labels{
+			"enflame.com/mps.capable": "false",
+		}
+	}
+
+	capable, err := isMPSCapable(manager)
+	if err != nil {
+		klog.ErrorS(err, "MPS-capable check failed")
+		return Labels{
+			"enflame.com/mps.capable": "false",
+		}
+	}
+
+	return Labels{
+		"enflame.com/mps.capable": strconv.FormatBool(capable),
+	}
+}
+
+func isMPSCapable(manager resource.Manager) (bool, error) {
+	devices, err := manager.GetDevices()
+	if err != nil {
+		return false, fmt.Errorf("failed to get device: %w", err)
+	}
+
+	for _, d := range devices {
+		isMigEnabled, err := d.IsMigEnabled()
+		if err != nil {
+			return false, fmt.Errorf("faled to check if device is MIG-enabled: %w", err)
+		}
+		if isMigEnabled {
+			klog.Warning("Seting mps.capable to false for MIG devices")
+			return false, nil
+		}
+	}
+	return true, nil
+}

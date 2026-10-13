@@ -1,0 +1,4 @@
+/releases
+Dockerfile.*
+.git
+/enflame-device-plugin

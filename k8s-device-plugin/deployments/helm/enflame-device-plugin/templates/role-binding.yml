@@ -1,0 +1,17 @@
+{{- if or (include "enflame-device-plugin.hasConfigMap" .) ( and .Values.gfd.enabled .Values.nfd.enableNodeFeatureApi ) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "enflame-device-plugin.fullname" . }}-role-binding
+  namespace: {{ include "enflame-device-plugin.namespace" . }}
+  labels:
+    {{- include "enflame-device-plugin.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "enflame-device-plugin.fullname" . }}-service-account
+    namespace: {{ include "enflame-device-plugin.namespace" . }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "enflame-device-plugin.fullname" . }}-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

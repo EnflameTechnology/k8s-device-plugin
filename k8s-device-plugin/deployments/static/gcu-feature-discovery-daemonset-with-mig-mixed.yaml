@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gcu-feature-discovery
+  labels:
+    app.kubernetes.io/name: gcu-feature-discovery
+    app.kubernetes.io/version: 0.15.0
+    app.kubernetes.io/part-of: enflame-gcu
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gcu-feature-discovery
+      app.kubernetes.io/part-of: enflame-gcu
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gcu-feature-discovery
+        app.kubernetes.io/version: 0.15.0
+        app.kubernetes.io/part-of: enflame-gcu
+    spec:
+      containers:
+        - image: nvcr.io/enflame/k8s-device-plugin:v0.15.0
+          name: gcu-feature-discovery
+          command: ["/usr/bin/gcu-feature-discovery"]
+          volumeMounts:
+            - name: output-dir
+              mountPath: "/etc/kubernetes/node-feature-discovery/features.d"
+            - name: host-sys
+              mountPath: "/sys"
+          env:
+            - name: ENFLAME_MIG_MONITOR_DEVICES
+              value: all
+            - name: MIG_STRATEGY
+              value: mixed
+          securityContext:
+            privileged: true
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              # On discrete-GCU based systems NFD adds the following lable where 10de is te ENFLAME PCI vendor ID
+              - key: feature.node.kubernetes.io/pci-10de.present
+                operator: In
+                values:
+                - "true"
+            - matchExpressions:
+              # On some Tegra-based systems NFD detects the CPU vendor ID as ENFLAME
+              - key: feature.node.kubernetes.io/cpu-model.vendor_id
+                operator: In
+                values:
+                - "ENFLAME"
+            - matchExpressions:
+              # We allow a GFD deployment to be forced by setting the following label to "true"
+              - key: "enflame.com/gcu.present"
+                operator: In
+                values:
+                - "true"
+      volumes:
+        - name: output-dir
+          hostPath:
+            path: "/etc/kubernetes/node-feature-discovery/features.d"
+        - name: host-sys
+          hostPath:
+            path: "/sys"

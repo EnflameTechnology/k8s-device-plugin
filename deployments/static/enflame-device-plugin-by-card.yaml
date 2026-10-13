@@ -1,0 +1,108 @@
+# Copyright (c) 2026, ENFLAME INC.  All rights reserved.
+#
+# enflame-device-plugin DaemonSet for "by-card" (按调度结果挂卡) whole-card scheduling.
+#
+# The device plugin mounts exactly the GCU cards an external scheduler writes on
+# each pod's annotation (default keys: enflame.com/vgpu-assumed +
+# enflame.com/assumed-time), instead of choosing cards itself. On startup it also
+# backfills the cards of pods already running before by-card was enabled ("stock
+# pods"), reading the real allocations from the kubelet podresources API.
+#
+# Prerequisites:
+#   * apply deployments/static/rbac.yaml first (ServiceAccount enflame-k8s-device-plugin
+#     with pods get/list/watch/update/patch).
+#   * the scheduler writes the host-physical GCU index (0..N, matching /dev/gcuN)
+#     into enflame.com/vgpu-assumed and a unique nanosecond assumed-time.
+#   * roll out in the order: reconcile stock pods -> switch scheduler -> enable by-card.
+#
+# Scope: whole-card only. Do NOT enable together with --pcie-switch-affinity.
+# The whole /var/lib/kubelet is mounted so both the device-plugin socket dir and
+# the pod-resources socket (used by the pod informer / reconcile) are reachable.
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: enflame-device-plugin-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: enflame-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: enflame-device-plugin-ds
+    spec:
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/control-plane
+      priorityClassName: "system-node-critical"
+      serviceAccount: enflame-k8s-device-plugin
+      securityContext:
+        runAsUser: 0
+      containers:
+      - image: artifact.enflame.cn/enflame_docker_images/enflame/k8s-device-plugin:v2.0.0
+        name: enflame-device-plugin-ctr
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: KUBECONFIG
+          value: /etc/kubernetes/kubelet.conf
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: FAIL_ON_INIT_ERROR
+          value: "false"
+        # ---- by-card whole-card scheduling ----
+        - name: BY_CARD_SCHEDULING
+          value: "true"
+        # backfill stock pods' cards at startup (runs once per node on rollout)
+        - name: RECONCILE_STOCK_PODS
+          value: "true"
+        # Annotation keys are configurable; defaults match the enflame.com/* keys.
+        # - name: SCHEDULER_DEVICE_ANNOTATION_KEY
+        #   value: "enflame.com/vgpu-assumed"
+        # - name: SCHEDULER_ASSUMED_TIME_ANNOTATION_KEY
+        #   value: "enflame.com/assumed-time"
+        - name: CUSTOM_REGISTER_RESOURCE
+          value: "enflame.com/gcu"
+        - name: CDI_CONFIG_PATH
+          value: "/etc/cdi"
+        - name: REGISTER_ALL_CDI_CONFIG
+          value: "true"
+        securityContext:
+          # privileged so eflib can enumerate GCUs via /dev/gcu*; matches the
+          # all-in-one deployment. (libefml/devices are injected by the enflame
+          # container-toolkit runtime hook via ENFLAME_VISIBLE_DEVICES=all.)
+          privileged: true
+        volumeMounts:
+        # whole /var/lib/kubelet => device-plugins socket dir + pod-resources socket
+        - name: device-plugin
+          mountPath: /var/lib/kubelet
+        - name: k8s-device-plugin-dir
+          mountPath: /var/log/enflame/k8s-device-plugin
+        - name: cdi-config
+          mountPath: /etc/cdi
+        - name: host-root
+          mountPath: /host-root
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet
+      - name: k8s-device-plugin-dir
+        hostPath:
+          path: /var/log/enflame/k8s-device-plugin
+          type: DirectoryOrCreate
+      - name: cdi-config
+        hostPath:
+          path: /etc/cdi
+          type: DirectoryOrCreate
+      - name: host-root
+        hostPath:
+          path: /

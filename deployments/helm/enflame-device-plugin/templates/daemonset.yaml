@@ -1,0 +1,58 @@
+{{- $variant := .Values.variant -}}
+{{- $variantConfig := index .Values.variants $variant -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.global.daemonset.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "enflame-device-plugin.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- .Values.global.daemonset.labels | toYaml | nindent 6 }}
+  updateStrategy:
+    {{- .Values.global.daemonset.updateStrategy | toYaml | nindent 4 }}
+  template:
+    metadata:
+      {{- $annotations := include "enflame-device-plugin.annotations" . }}
+      {{- if $annotations }}
+      annotations:
+        {{- $annotations | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- .Values.global.daemonset.labels | toYaml | nindent 8 }}
+    spec:
+      serviceAccount: {{ include "enflame-device-plugin.serviceAccountName" . }}
+      tolerations:
+        {{- include "enflame-device-plugin.tolerations" . | nindent 8 }}
+      priorityClassName: {{ .Values.global.pod.priorityClassName | quote }}
+      {{- $podSecurityContext := include "enflame-device-plugin.podSecurityContext" . }}
+      {{- if $podSecurityContext }}
+      securityContext:
+        {{- $podSecurityContext | nindent 8 }}
+      {{- end }}
+      containers:
+      - image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        name: {{ .Values.global.pod.containerName }}
+        {{- if .Values.image.pullPolicy }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- end }}
+        env:
+          {{- include "enflame-device-plugin.environment" . | nindent 10 }}
+        securityContext:
+          {{- include "enflame-device-plugin.securityContext" . | nindent 10 }}
+        volumeMounts:
+        {{- range $name, $config := .Values.global.volumes }}
+        - name: {{ $name | kebabcase }}
+          mountPath: {{ $config.mountPath }}
+        {{- end }}
+      volumes:
+      {{- range $name, $config := .Values.global.volumes }}
+      - name: {{ $name | kebabcase }}
+        hostPath:
+          path: {{ $config.hostPath }}
+          {{- if $config.type }}
+          type: {{ $config.type }}
+          {{- end }}
+      {{- end }} 

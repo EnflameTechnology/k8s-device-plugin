@@ -1,0 +1,14 @@
+{{- if eq (include "enflame-device-plugin.hasEmbeddedConfigMap" .) "true" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "enflame-device-plugin.configMapName" . }}
+  namespace: {{ include "enflame-device-plugin.namespace" . }}
+  labels:
+    {{- include "enflame-device-plugin.labels" . | nindent 4 }}
+data:
+{{- range $name, $contents := $.Values.config.map }}
+  {{ $name }}: |-
+{{ $contents | indent 4 }}
+{{- end -}}
+{{- end -}}

@@ -1,0 +1,56 @@
+1. Thank you for installing {{ .Chart.Name }}!
+
+2. The Enflame Device Plugin has been deployed with the "{{ .Values.variant }}" variant.
+   {{- $variantConfig := include "enflame-device-plugin.variantConfig" . | fromYaml }}
+   Description: {{ $variantConfig.description }}
+
+3. To verify the installation, run:
+   kubectl get daemonset {{ .Values.global.daemonset.name }} -n {{ .Values.namespace }}
+
+4. To check the device plugin pods:
+   kubectl get pods -n {{ .Values.namespace }} -l name={{ .Values.global.daemonset.labels.name }}
+
+5. To view the device plugin logs:
+   vim /var/log/enflame/k8s-device-plugin/k8s-device-plugin.log
+
+{{- $variant := .Values.variant }}
+{{- if eq $variant "cdi" }}
+
+6. CDI Variant Configuration:
+   - Device list strategy: cdi-annotations
+   - CDI configuration is mounted from /etc/cdi
+   - Make sure CDI configuration files are present on nodes
+
+{{- else if eq $variant "pcie-switch-affinity" }}
+
+6. PCIe Switch Affinity Variant Configuration:
+   - PCIe switch affinity is enabled
+   - Extended RBAC permissions are configured
+   - KUBECONFIG is set to /etc/kubernetes/kubelet.conf
+
+{{- else if eq $variant "compat-with-cpumanager" }}
+
+6. CPU Manager Compatibility Variant Configuration:
+   - Device specs passing is enabled
+   - Additional tolerations are configured
+   - This variant is compatible with Kubernetes CPU Manager
+
+{{- else }}
+
+6. Basic Variant Configuration:
+   - Standard Enflame device plugin deployment
+   - Minimal RBAC permissions
+   - Restricted security context
+
+{{- end }}
+
+7. To check available Enflame GCU resources on nodes:
+   kubectl get node $nodeName -o jsonpath='{.status.capacity}'|grep enflame
+   kubectl get node $nodeName -o jsonpath='{.status.allocatable}'|grep enflame
+
+8. To deploy a different variant, use:
+   helm upgrade {{ .Release.Name }} -n {{ .Release.Namespace }} helm/{{ .Chart.Name }} --set variant=cdi
+   helm upgrade {{ .Release.Name }} -n {{ .Release.Namespace }} helm/{{ .Chart.Name }} --set variant=pcie-switch-affinity
+   helm upgrade {{ .Release.Name }} -n {{ .Release.Namespace }} helm/{{ .Chart.Name }} --set variant=compat-with-cpumanager
+
+9. For more information, reference k8s-device-plugin user guide

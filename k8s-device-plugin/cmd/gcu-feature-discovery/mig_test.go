@@ -1,0 +1,339 @@
+// Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+
+package main
+
+import (
+	"io"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	spec "enflame/k8s-device-plugin/api/config/v1"
+	"enflame/k8s-device-plugin/internal/flags"
+	"enflame/k8s-device-plugin/internal/lm"
+	"enflame/k8s-device-plugin/internal/resource"
+	rt "enflame/k8s-device-plugin/internal/resource/testing"
+)
+
+func TestMigStrategyNone(t *testing.T) {
+	devices := []resource.Device{
+		rt.NewMigEnabledDevice(
+			rt.NewMigDevice(3, 0, 20000),
+			rt.NewMigDevice(3, 0, 20000),
+		),
+	}
+	efmlMock := rt.NewManagerMockWithDevices(devices...)
+	// create VGCU mock library with empty vgcu devices
+	vgcuMock := NewTestVGCUMock()
+
+	conf := &spec.Config{
+		Flags: spec.Flags{
+			CommandLineFlags: spec.CommandLineFlags{
+				MigStrategy:     ptr("none"),
+				FailOnInitError: ptr(true),
+				GFD: &spec.GFDCommandLineFlags{
+					Oneshot:         ptr(true),
+					OutputFile:      ptr("./gfd-test-mig-none"),
+					SleepInterval:   ptr(spec.Duration(time.Second)),
+					NoTimestamp:     ptr(false),
+					MachineTypeFile: ptr(testMachineTypeFile),
+				},
+			},
+		},
+	}
+
+	setupMachineFile(t)
+	defer removeMachineFile(t)
+
+	d := gfd{
+		manager:       efmlMock,
+		vgcu:          vgcuMock,
+		config:        conf,
+		labelOutputer: lm.NewOutputer(conf, flags.NodeConfig{}, flags.ClientSets{}),
+	}
+	restart, err := d.run(nil)
+	require.NoError(t, err, "Error from run function")
+	require.False(t, restart)
+
+	outFile, err := os.Open(*conf.Flags.GFD.OutputFile)
+	require.NoError(t, err, "Opening output file")
+
+	defer func() {
+		err = outFile.Close()
+		require.NoError(t, err, "Closing output file")
+		err = os.Remove(*conf.Flags.GFD.OutputFile)
+		require.NoError(t, err, "Removing output file")
+	}()
+
+	output, err := io.ReadAll(outFile)
+	require.NoError(t, err, "Reading output file")
+
+	err = checkResult(output, cfg.Path("tests/expected-output-mig-none.txt"), false)
+	require.NoError(t, err, "Checking result")
+
+	labels, err := buildLabelMapFromOutput(output)
+	require.NoError(t, err, "Building map of labels from output file")
+
+	require.Equal(t, labels["enflame.com/gcu.count"], "1", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.product"], "MOCKMODEL", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.memory"], "300", "Incorrect label")
+}
+
+func TestMigStrategySingleForNoMigDevices(t *testing.T) {
+	efmlMock := NewTestEfmlMock()
+	// create VGCU mock library with empty vgcu devices
+	vgcuMock := NewTestVGCUMock()
+
+	conf := &spec.Config{
+		Flags: spec.Flags{
+			CommandLineFlags: spec.CommandLineFlags{
+				MigStrategy:     ptr("single"),
+				FailOnInitError: ptr(true),
+				GFD: &spec.GFDCommandLineFlags{
+					Oneshot:         ptr(true),
+					OutputFile:      ptr("./gfd-test-mig-single-no-mig"),
+					SleepInterval:   ptr(spec.Duration(time.Second)),
+					NoTimestamp:     ptr(false),
+					MachineTypeFile: ptr(testMachineTypeFile),
+				},
+			},
+		},
+	}
+
+	setupMachineFile(t)
+	defer removeMachineFile(t)
+
+	d := gfd{
+		manager:       efmlMock,
+		vgcu:          vgcuMock,
+		config:        conf,
+		labelOutputer: lm.NewOutputer(conf, flags.NodeConfig{}, flags.ClientSets{}),
+	}
+	restart, err := d.run(nil)
+	require.NoError(t, err, "Error from run function")
+	require.False(t, restart)
+
+	outFile, err := os.Open(*conf.Flags.GFD.OutputFile)
+	require.NoError(t, err, "Opening output file")
+
+	defer func() {
+		err = outFile.Close()
+		require.NoError(t, err, "Closing output file")
+		err = os.Remove(*conf.Flags.GFD.OutputFile)
+		require.NoError(t, err, "Removing output file")
+	}()
+
+	output, err := io.ReadAll(outFile)
+	require.NoError(t, err, "Reading output file")
+
+	err = checkResult(output, cfg.Path("tests/expected-output-mig-single.txt"), false)
+	require.NoError(t, err, "Checking result")
+
+	labels, err := buildLabelMapFromOutput(output)
+	require.NoError(t, err, "Building map of labels from output file")
+
+	require.Equal(t, labels["enflame.com/mig.strategy"], "single", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.count"], "1", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.product"], "MOCKMODEL", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.memory"], "300", "Incorrect label")
+}
+
+func TestMigStrategySingleForMigDeviceMigDisabled(t *testing.T) {
+	// create VGCU mock library with empty vgcu devices
+	vgcuMock := NewTestVGCUMock()
+	devices := []resource.Device{
+		rt.NewDeviceMock(false).WithMigDevices(
+			rt.NewMigDevice(3, 0, 20000),
+			rt.NewMigDevice(3, 0, 20000),
+		),
+	}
+	efmlMock := rt.NewManagerMockWithDevices(devices...)
+
+	conf := &spec.Config{
+		Flags: spec.Flags{
+			CommandLineFlags: spec.CommandLineFlags{
+				MigStrategy:     ptr("single"),
+				FailOnInitError: ptr(true),
+				GFD: &spec.GFDCommandLineFlags{
+					Oneshot:         ptr(true),
+					OutputFile:      ptr("./gfd-test-mig-single-no-mig"),
+					SleepInterval:   ptr(spec.Duration(time.Second)),
+					NoTimestamp:     ptr(false),
+					MachineTypeFile: ptr(testMachineTypeFile),
+				},
+			},
+		},
+	}
+
+	setupMachineFile(t)
+	defer removeMachineFile(t)
+
+	d := gfd{
+		manager:       efmlMock,
+		vgcu:          vgcuMock,
+		config:        conf,
+		labelOutputer: lm.NewOutputer(conf, flags.NodeConfig{}, flags.ClientSets{}),
+	}
+	restart, err := d.run(nil)
+	require.NoError(t, err, "Error from run function")
+	require.False(t, restart)
+
+	outFile, err := os.Open(*conf.Flags.GFD.OutputFile)
+	require.NoError(t, err, "Opening output file")
+
+	defer func() {
+		err = outFile.Close()
+		require.NoError(t, err, "Closing output file")
+		err = os.Remove(*conf.Flags.GFD.OutputFile)
+		require.NoError(t, err, "Removing output file")
+	}()
+
+	output, err := io.ReadAll(outFile)
+	require.NoError(t, err, "Reading output file")
+
+	err = checkResult(output, cfg.Path("tests/expected-output-mig-single.txt"), false)
+	require.NoError(t, err, "Checking result")
+
+	labels, err := buildLabelMapFromOutput(output)
+	require.NoError(t, err, "Building map of labels from output file")
+
+	require.Equal(t, labels["enflame.com/mig.strategy"], "single", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.count"], "1", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.product"], "MOCKMODEL", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.memory"], "300", "Incorrect label")
+}
+
+func TestMigStrategySingle(t *testing.T) {
+	// create VGCU mock library with empty vgcu devices
+	vgcuMock := NewTestVGCUMock()
+	devices := []resource.Device{
+		rt.NewMigEnabledDevice(
+			rt.NewMigDevice(3, 0, 20),
+			rt.NewMigDevice(3, 0, 20),
+		),
+	}
+	efmlMock := rt.NewManagerMockWithDevices(devices...)
+
+	conf := &spec.Config{
+		Flags: spec.Flags{
+			CommandLineFlags: spec.CommandLineFlags{
+				MigStrategy:     ptr("single"),
+				FailOnInitError: ptr(true),
+				GFD: &spec.GFDCommandLineFlags{
+					Oneshot:         ptr(true),
+					OutputFile:      ptr("./gfd-test-mig-single"),
+					SleepInterval:   ptr(spec.Duration(time.Second)),
+					NoTimestamp:     ptr(false),
+					MachineTypeFile: ptr(testMachineTypeFile),
+				},
+			},
+		},
+	}
+
+	setupMachineFile(t)
+	defer removeMachineFile(t)
+
+	d := gfd{
+		manager:       efmlMock,
+		vgcu:          vgcuMock,
+		config:        conf,
+		labelOutputer: lm.NewOutputer(conf, flags.NodeConfig{}, flags.ClientSets{}),
+	}
+	restart, err := d.run(nil)
+	require.NoError(t, err, "Error from run function")
+	require.False(t, restart)
+
+	outFile, err := os.Open(*conf.Flags.GFD.OutputFile)
+	require.NoError(t, err, "Opening output file")
+
+	defer func() {
+		err = outFile.Close()
+		require.NoError(t, err, "Closing output file")
+		err = os.Remove(*conf.Flags.GFD.OutputFile)
+		require.NoError(t, err, "Removing output file")
+	}()
+
+	output, err := io.ReadAll(outFile)
+	require.NoError(t, err, "Reading output file")
+
+	err = checkResult(output, cfg.Path("tests/expected-output-mig-single.txt"), false)
+	require.NoError(t, err, "Checking result")
+
+	labels, err := buildLabelMapFromOutput(output)
+	require.NoError(t, err, "Building map of labels from output file")
+
+	require.Equal(t, labels["enflame.com/mig.strategy"], "single", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.count"], "2", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.product"], "MOCKMODEL-MIG-3g.20gb", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.memory"], "20", "Incorrect label")
+}
+
+func TestMigStrategyMixed(t *testing.T) {
+	// create VGCU mock library with empty vgcu devices
+	vgcuMock := NewTestVGCUMock()
+	devices := []resource.Device{
+		rt.NewMigEnabledDevice(
+			rt.NewMigDevice(3, 0, 20),
+			rt.NewMigDevice(1, 0, 5),
+		),
+	}
+
+	efmlMock := rt.NewManagerMockWithDevices(devices...)
+
+	conf := &spec.Config{
+		Flags: spec.Flags{
+			CommandLineFlags: spec.CommandLineFlags{
+				MigStrategy:     ptr("mixed"),
+				FailOnInitError: ptr(true),
+				GFD: &spec.GFDCommandLineFlags{
+					Oneshot:         ptr(true),
+					OutputFile:      ptr("./gfd-test-mig-mixed"),
+					SleepInterval:   ptr(spec.Duration(time.Second)),
+					NoTimestamp:     ptr(false),
+					MachineTypeFile: ptr(testMachineTypeFile),
+				},
+			},
+		},
+	}
+
+	setupMachineFile(t)
+	defer removeMachineFile(t)
+
+	d := gfd{
+		manager:       efmlMock,
+		vgcu:          vgcuMock,
+		config:        conf,
+		labelOutputer: lm.NewOutputer(conf, flags.NodeConfig{}, flags.ClientSets{}),
+	}
+	restart, err := d.run(nil)
+	require.NoError(t, err, "Error from run function")
+	require.False(t, restart)
+
+	outFile, err := os.Open(*conf.Flags.GFD.OutputFile)
+	require.NoError(t, err, "Opening output file")
+
+	defer func() {
+		err = outFile.Close()
+		require.NoError(t, err, "Closing output file")
+		err = os.Remove(*conf.Flags.GFD.OutputFile)
+		require.NoError(t, err, "Removing output file")
+	}()
+
+	output, err := io.ReadAll(outFile)
+	require.NoError(t, err, "Reading output file")
+
+	err = checkResult(output, cfg.Path("tests/expected-output-mig-mixed.txt"), false)
+	require.NoError(t, err, "Checking result")
+
+	labels, err := buildLabelMapFromOutput(output)
+	require.NoError(t, err, "Building map of labels from output file")
+
+	require.Equal(t, labels["enflame.com/mig.strategy"], "mixed", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.count"], "1", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.product"], "MOCKMODEL", "Incorrect label")
+	require.Equal(t, labels["enflame.com/gcu.memory"], "300", "Incorrect label")
+	require.Contains(t, labels, "enflame.com/mig-3g.20gb.count", "Missing label")
+	require.Contains(t, labels, "enflame.com/mig-1g.5gb.count", "Missing label")
+}

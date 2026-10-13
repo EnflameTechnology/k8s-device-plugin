@@ -1,0 +1,187 @@
+# Default values for enflame-device-plugin.
+# This is a YAML-formatted file.
+
+# Deployment variant configuration
+# Options: basic, cdi, pcie-switch-affinity, compat-with-cpumanager
+variant: "basic"
+
+# Image configuration
+image:
+  repository: artifact.enflame.cn/enflame_docker_images/enflame/k8s-device-plugin
+  tag: "v2.0.0"
+  pullPolicy: IfNotPresent
+
+# Namespace for deployment
+namespace: kube-system
+
+# Override any configuration by setting specific values
+# These will be merged with variant-specific settings
+overrides: {}
+  # Examples:
+  # env:
+  #   CUSTOM_REGISTER_RESOURCE: "custom.com/gcu"
+  # securityContext:
+  #   mode: privileged
+
+# Predefined configurations for different variants
+variants:
+  basic:
+    description: "Standard deployment with minimal permissions"
+    serviceAccount:
+      name: enflame-k8s-device-plugin
+    securityContext:
+      mode: restricted
+      pod:
+        runAsUser: 0
+      container:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+          add: ["SYS_CHROOT"]
+    rbac:
+      rules:
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+    env:
+      FAIL_ON_INIT_ERROR: "false"
+      CUSTOM_REGISTER_RESOURCE: "enflame.com/gcu,enflame-tech.com/gcu,enflame.com/vgcu"
+      CDI_CONFIG_PATH: "/etc/cdi"
+      REGISTER_ALL_CDI_CONFIG: "true"
+    tolerations:
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/control-plane
+    annotations: {}
+  
+  cdi:
+    description: "CDI (Container Device Interface) variant"
+    serviceAccount:
+      name: enflame-k8s-device-plugin
+    securityContext:
+      mode: privileged
+      container:
+        privileged: true
+    rbac:
+      rules:
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+    env:
+      FAIL_ON_INIT_ERROR: "false"
+      DEVICE_LIST_STRATEGY: "cdi-annotations"
+      CUSTOM_REGISTER_RESOURCE: "enflame.com/gcu,enflame-tech.com/gcu,enflame.com/vgcu"
+      CDI_CONFIG_PATH: "/etc/cdi"
+      REGISTER_ALL_CDI_CONFIG: "true"
+    tolerations:
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/control-plane
+    annotations: {}
+  
+  pcie-switch-affinity:
+    description: "PCIe switch topology awareness variant"
+    serviceAccount:
+      name: enflame-k8s-device-plugin
+    securityContext:
+      mode: restricted
+      pod:
+        runAsUser: 0
+      container:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+          add: ["SYS_CHROOT"]
+    rbac:
+      rules:
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["update", "patch", "get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["bindings", "pods/binding"]
+          verbs: ["create"]
+    env:
+      FAIL_ON_INIT_ERROR: "false"
+      KUBECONFIG: "/etc/kubernetes/kubelet.conf"
+      PCIE_SWITCH_AFFINITY: "true"
+      CUSTOM_REGISTER_RESOURCE: "enflame.com/gcu,enflame-tech.com/gcu"
+      CDI_CONFIG_PATH: "/etc/cdi"
+      REGISTER_ALL_CDI_CONFIG: "true"
+    tolerations:
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/control-plane
+    annotations:
+      scheduler.alpha.kubernetes.io/critical-pod: ""
+  
+  compat-with-cpumanager:
+    description: "CPU Manager compatibility variant"
+    serviceAccount:
+      name: enflame-k8s-device-plugin
+    securityContext:
+      mode: privileged
+      container:
+        privileged: true
+    rbac:
+      rules:
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+    env:
+      FAIL_ON_INIT_ERROR: "false"
+      PASS_DEVICE_SPECS: "true"
+      CUSTOM_REGISTER_RESOURCE: "enflame.com/gcu,enflame-tech.com/gcu,enflame.com/vgcu"
+      CDI_CONFIG_PATH: "/etc/cdi"
+      REGISTER_ALL_CDI_CONFIG: "true"
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        operator: Exists
+        key: node-role.kubernetes.io/control-plane
+    annotations:
+      scheduler.alpha.kubernetes.io/critical-pod: ""
+
+# Global defaults (used by all variants)
+global:
+  # DaemonSet configuration
+  daemonset:
+    name: enflame-device-plugin-daemonset
+    labels:
+      name: enflame-device-plugin-ds
+    updateStrategy:
+      type: RollingUpdate
+  
+  # Pod configuration
+  pod:
+    priorityClassName: "system-node-critical"
+    containerName: enflame-device-plugin-ctr
+  
+  # Volume mounts and volumes
+  volumes:
+    devicePlugin:
+      hostPath: /var/lib/kubelet
+      mountPath: /var/lib/kubelet
+    logDir:
+      hostPath: /var/log/enflame/k8s-device-plugin
+      mountPath: /var/log/enflame/k8s-device-plugin
+      type: DirectoryOrCreate
+    cdiConfig:
+      hostPath: /etc/cdi
+      mountPath: /etc/cdi
+      type: DirectoryOrCreate
+    hostRoot:
+      hostPath: /
+      mountPath: /host-root 

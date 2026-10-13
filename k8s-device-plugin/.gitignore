@@ -1,0 +1,10 @@
+/enflame-device-plugin
+/config-manager
+/gcu-feature-discovery
+/mps-control-daemon
+/releases
+deployments/helm/gcu-feature-discovery
+e2e_logs
+
+*.out
+*.log

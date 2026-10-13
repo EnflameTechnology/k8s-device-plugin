@@ -1,0 +1,18 @@
+# Copyright (c) 2024, ENFLAME INC.  All rights reserved.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-vgcu-example
+  namespace: kube-system
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: pod-vgcu-example
+    image: ubuntu:20.04
+    imagePullPolicy: IfNotPresent
+    command: ["sleep"]
+    args: ["100000"]
+    resources:
+      limits:
+        enflame.com/vgcu: 4

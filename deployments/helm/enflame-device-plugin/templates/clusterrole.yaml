@@ -1,0 +1,8 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ include "enflame-device-plugin.serviceAccountName" . }}
+  labels:
+    {{- include "enflame-device-plugin.labels" . | nindent 4 }}
+rules:
+{{- include "enflame-device-plugin.rbacRules" . | nindent 0 }} 
